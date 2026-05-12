@@ -398,7 +398,7 @@ import re
 Format
 ------
 ```perl
-<str> = f'{<obj>}, {<obj>}'            # Brackets can contain any expression.
+<str> = f'{<obj>}, {<obj>}'            # Braces can also contain expressions.
 <str> = '{}, {}'.format(<obj>, <obj>)  # Or '{0}, {a}'.format(<obj>, a=<obj>).
 <str> = '%s, %s' % (<obj>, <obj>)      # Old and redundant formatting method.
 ```
@@ -3056,12 +3056,9 @@ rect(<Surf>, color, <Rect>, width=0)            # Also polygon(<Surf>, color, po
 
 ### Basic Mario Brothers Example
 ```python
-import collections, dataclasses, enum, io, itertools as it, pygame as pg, urllib.request
-from random import randint
+import pygame as pg, dataclasses as dc, enum, io, itertools, random as r, urllib.request
 
-P = collections.namedtuple('P', 'x y')          # Position (x and y coordinates).
-D = enum.Enum('D', 'n e s w')                   # Direction (north, east, etc.).
-W, H, MAX_S = 50, 50, P(5, 10)                  # Width, height, maximum speed.
+W, H, D = 50, 50, enum.Enum('D', 'n e s w')     # Width, Height, Direction.
 
 def main():
     def get_screen():
@@ -3070,14 +3067,15 @@ def main():
     def get_images():
         url = 'https://gto76.github.io/python-cheatsheet/web/mario_bros.png'
         img = pg.image.load(io.BytesIO(urllib.request.urlopen(url).read()))
-        return [img.subsurface(get_rect(x, 0)) for x in range(img.get_width() // 16)]
+        return [img.subsurface(get_rect(x, 0)) for x in range(20)]
     def get_mario():
-        Mario = dataclasses.make_dataclass('Mario', 'rect spd facing_left frame_cycle'.split())
-        return Mario(get_rect(1, 1), P(0, 0), False, it.cycle(range(3)))
+        Mario = dc.make_dataclass('Mario', ['rect', 'vx', 'vy', 'dir', 'img_i'])
+        return Mario(get_rect(1, 1), 0, 0, D.e, itertools.cycle(range(3)))
     def get_tiles():
-        border = [(x, y) for x in range(W) for y in range(H) if x in [0, W-1] or y in [0, H-1]]
-        platforms = [(randint(1, W-2), randint(2, H-2)) for _ in range(W*H // 10)]
-        return [get_rect(x, y) for x, y in border + platforms]
+        is_border = lambda x, y: x in [0, W-1] or y in [0, H-1]
+        borders = [(x, y) for x in range(W) for y in range(H) if is_border(x, y)]
+        platforms = [(r.randint(1, W-2), r.randint(2, H-2)) for _ in range(200)]
+        return [get_rect(x, y) for x, y in borders + platforms]
     def get_rect(x, y):
         return pg.Rect(x*16, y*16, 16, 16)
     run(get_screen(), get_images(), get_mario(), get_tiles())
@@ -3089,39 +3087,41 @@ def run(screen, images, mario, tiles):
         clock.tick(28)
         pressed |= {e.key for e in pg.event.get(pg.KEYDOWN)}
         pressed -= {e.key for e in pg.event.get(pg.KEYUP)}
-        update_speed(mario, tiles, pressed)
+        update_velocity(mario, tiles, pressed)
         update_position(mario, tiles)
         draw(screen, images, mario, tiles)
     pg.quit()
 
-def update_speed(mario, tiles, pressed):
-    x, y = mario.spd
-    x += 2 * ((pg.K_RIGHT in pressed) - (pg.K_LEFT in pressed))
-    x += (x < 0) - (x > 0)
-    y += 1 if D.s not in get_boundaries(mario.rect, tiles) else (pg.K_UP in pressed) * -10
-    mario.spd = P(x=max(-MAX_S.x, min(MAX_S.x, x)), y=max(-MAX_S.y, min(MAX_S.y, y)))
+def update_velocity(mario, tiles, pressed):
+    mario.vx += 2 * ((pg.K_RIGHT in pressed) - (pg.K_LEFT in pressed))
+    mario.vx += (mario.vx < 0) - (mario.vx > 0)
+    mario.vy += 1 if is_airborne(mario, tiles) else (pg.K_UP in pressed) * -10
+    mario.vx, mario.vy = max(-5, min(5, mario.vx)), min(10, mario.vy)
 
 def update_position(mario, tiles):
     x, y = mario.rect.topleft
-    n_steps = max(abs(s) for s in mario.spd)
-    for _ in range(n_steps):
-        mario.spd = stop_on_collision(mario.spd, get_boundaries(mario.rect, tiles))
-        mario.rect.topleft = x, y = x + (mario.spd.x / n_steps), y + (mario.spd.y / n_steps)
+    steps = max(abs(mario.vx), abs(mario.vy))
+    for _ in range(steps):
+        bounds = get_boundaries(mario.rect, tiles)
+        mario.vx, mario.vy = stop_on_collision(mario.vx, mario.vy, bounds)
+        mario.rect.topleft = x, y = x + (mario.vx/steps), y + (mario.vy/steps)
+
+def is_airborne(mario, tiles):
+    return D.s not in get_boundaries(mario.rect, tiles)
 
 def get_boundaries(rect, tiles):
-    deltas = {D.n: P(0, -1), D.e: P(1, 0), D.s: P(0, 1), D.w: P(-1, 0)}
-    return {d for d, delta in deltas.items() if rect.move(delta).collidelist(tiles) != -1}
+    deltas = {D.n: (0, -1), D.e: (1, 0), D.s: (0, 1), D.w: (-1, 0)}
+    return {d for d in D if rect.move(deltas[d]).collidelist(tiles) != -1}
 
-def stop_on_collision(spd, bounds):
-    return P(x=0 if (D.w in bounds and spd.x < 0) or (D.e in bounds and spd.x > 0) else spd.x,
-             y=0 if (D.n in bounds and spd.y < 0) or (D.s in bounds and spd.y > 0) else spd.y)
+def stop_on_collision(vx, vy, bounds):
+    return (0 if (D.w in bounds and vx < 0) or (D.e in bounds and vx > 0) else vx,
+            0 if (D.n in bounds and vy < 0) or (D.s in bounds and vy > 0) else vy)
 
 def draw(screen, images, mario, tiles):
     screen.fill((85, 168, 255))
-    mario.facing_left = mario.spd.x < 0 if mario.spd.x else mario.facing_left
-    is_airborne = D.s not in get_boundaries(mario.rect, tiles)
-    image_index = 4 if is_airborne else next(mario.frame_cycle) if mario.spd.x else 6
-    screen.blit(images[image_index + (mario.facing_left * 9)], mario.rect)
+    mario.dir = mario.dir if mario.vx == 0 else D.w if mario.vx < 0 else D.e
+    img_i = 4 if is_airborne(mario, tiles) else next(mario.img_i) if mario.vx else 6
+    screen.blit(images[img_i + ((mario.dir == D.w) * 9)], mario.rect)
     for tile in tiles:
         is_border = tile.x in [0, (W-1)*16] or tile.y in [0, (H-1)*16]
         screen.blit(images[18 if is_border else 19], tile)
